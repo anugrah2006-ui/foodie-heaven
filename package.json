@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "bootstrap": "^5.3.8",
+    "firebase": "^12.9.0"
+  },
+  "scripts": {
+    "dev": "concurrently \"cd menu-app && npm start\" \"cd cart-app && npm start\" \"cd login-app && npm start\""
+  }
+}

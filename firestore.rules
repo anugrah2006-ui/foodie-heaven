@@ -1,0 +1,92 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ==========================================
+    // GLOBAL HELPERS
+    // ==========================================
+    
+    // Check if user is logged in
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Fetch user's role from the 'users' collection
+    function getRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    // Role Checks
+    function isSuperAdmin() {
+      return isSignedIn() && getRole() == 'super_admin';
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (getRole() == 'admin' || getRole() == 'super_admin');
+    }
+
+    function isSupport() {
+      return isSignedIn() && (getRole() == 'support' || isAdmin());
+    }
+
+    function isFinance() {
+      return isSignedIn() && (getRole() == 'finance' || isSuperAdmin());
+    }
+
+    // ==========================================
+    // COLLECTION RULES
+    // ==========================================
+
+    // Users Collection: Everyone can see their own profile. Only Admins can edit roles.
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if isSignedIn(); // Allow signup
+      allow update: if isSuperAdmin() || (request.auth.uid == userId && !request.resource.data.diff().affectedKeys().hasAny(['role', 'status']));
+    }
+
+    // Restaurants: Publicly readable. Only Admins can create/edit.
+    match /restaurants/{resId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Menu Items: Publicly readable. Admins and Restaurant Admins can write.
+    match /menuItems/{itemId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin() || (isSignedIn() && getRole() == 'restaurant_admin' && resource.data.resId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restaurantId);
+    }
+
+    // Orders: User sees own. Admins and Support see all. 
+    // Status updates are restricted via Cloud Functions, but rules prevent basic breaches.
+    match /orders/{orderId} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.userId || isSupport() || (getRole() == 'restaurant_admin' && resource.data.resId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.restaurantId));
+      allow create: if isSignedIn();
+      allow update: if isSupport() || (isSignedIn() && request.auth.uid == resource.data.userId && request.resource.data.status == 'cancelled' && resource.data.status == 'pending');
+    }
+
+    // Delivery Partners: Admins can manage.
+    match /deliveryPartners/{partnerId} {
+      allow read: if isSupport();
+      allow write: if isAdmin();
+    }
+
+    // Coupons/Marketing: Public reads valid coupons. Admins create.
+    match /coupons/{couponId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Admin Logs: Super Admin ONLY.
+    match /adminLogs/{logId} {
+      allow read: if isSuperAdmin();
+      allow write: if false; // System written via Cloud Functions Service Account ONLY
+    }
+
+    // Global Settings
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+  }
+}
